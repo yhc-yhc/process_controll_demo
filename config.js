@@ -6,7 +6,12 @@ module.exports = {
             //"replset":{"rs_name":"pictureWorks","readPreference":"primary","strategy":"ping","poolSize":10,"connectWithNoPrimary":false,"haInterval":1000,"socketOptions":{"keepAlive":600}}
     },
     uploadOriginal: false,
+    uploadThumbnail: true,
     cloudAPIUrl :'http://10.10.30.26:3000',
     syncPhotos:'/sync/syncToCloud',
+    syncPhotos_new:'/sync/syncToCloud_withoutFile',
+
     syncOriginalPhoto:'/sync/syncFile',
+    appID: 'upload_josh',
+    photosFolder: '/data/website/'
 }

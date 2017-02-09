@@ -1,14 +1,29 @@
 var async = require('async');
+var crypto = require('crypto')
 var photoModel = require('../models/photoModel');
 var fs = require('fs-extra');
 var fsw = require('fs');
+var path = require('path');
 var config = require('../config.js');
 var request = require('request');
-var cloudAPIUrl = config.cloudAPIUrl + config.syncPhotos;
+
+
+var hashDatas = [];
+hashDatas.push(fs.readFileSync(__dirname + '/hash1.jpg'));
+hashDatas.push(fs.readFileSync(__dirname + '/hash2.jpg'));
+hashDatas.push(fs.readFileSync(__dirname + '/hash3.jpg'));
+var hashRandom = 0;
+
 
 exports.uploadPhotoCloud = function (photos, fn) {
-    var count = 0;
-    var uploadOriginal = config.uploadOriginal || false;
+    var count = 0,
+        self = this,
+        LBase64str = '',
+        MBase64str = '',
+        SBase64str = '',
+        WBase64str = '',
+        body = null,
+        cloudAPIUrl = config.cloudAPIUrl + config.syncPhotos;
 
     async.each(photos, function (photo, cb) {
         async.auto({
@@ -24,80 +39,101 @@ exports.uploadPhotoCloud = function (photos, fn) {
             },
 
             uploadToCloud: ["updateUploadCount", function (callback, results) {
-                try {
-                	if(uploadOriginal) {
-	                    var OData = fs.readFileSync(photo.originalInfo.path); // Johnny: Stop original file upload but upload data as usual
-	                    var OBase64str = new Buffer(OData).toString('base64');
+                if (config.uploadOriginal) {
+                    var OData = fs.readFileSync(photo.originalInfo.path); // Johnny: Stop original file upload but upload data as usual
+                    var OBase64str = new Buffer(OData).toString('base64');
 
-	                    request.post({
-		                     url: config.cloudAPIUrl + config.syncOriginalPhoto,
-		                     body: {
-			                     relativePath: photo.originalInfo.url,
-			                     O: OBase64str,
-			                     oLength: OBase64str.length,
-			                     appID: config.appID
-		                     },
-                             headers: {   
-                                'Content-Type':'application/x-www-form-urlencoded',
-                                'Content-Length': data.length  
-                              },
-		                     json: true
-		                },
-		                function (e, r, reply) {
-		                     if (e) {
-		                     	console.error('uploadOriginal >>>>> ', photo.name, config.cloudAPIUrl, config.syncOriginalPhoto, '\n', e);
-		                     	return callback('errInfo.errUploadImage');
-		                     } else {
-			                     //console.log(reply);
-			                     //console.timeEnd('Upload Original Post');
-			                     return callback(null, 1);
-		                     }
-	                     });
-                	}
-
-                    var LData = fs.readFileSync(photo.thumbnail.x1024.path);
-                    var LBase64str = new Buffer(LData).toString('base64');
-                    var MData = fs.readFileSync(photo.thumbnail.x512.path);
-                    var MBase64str = new Buffer(MData).toString('base64');
-                    var SData = fs.readFileSync(photo.thumbnail.x128.path);
-                    var SBase64str = new Buffer(SData).toString('base64');
-                    var OBase64str = '';
-                    var WBase64str = '';
-                    if (photo.thumbnail.w512) {
-                        var WData = fsw.readFileSync(photo.thumbnail.w512.path);
-                        var WBase64str = new Buffer(WData).toString('base64');
-                    } else {
-                        console.fatal('NO WATERMARK DATA: ', photo.thumbnail.x1024.path);
-                    }
-                    request.post(
-                        {
-                            url: cloudAPIUrl,
-                            body: {
-                                photo: photo,
-                                L: LBase64str,
-                                M: MBase64str,
-                                S: SBase64str,
-                                O: OBase64str,
-                                W: WBase64str,
-                                appID: config.appID
-                            },
-                            json: true
-                        }
-                        , function (e, r, reply) {
-                            if (e) {
-                                console.error(' *** upload Thumbnail ERROR \r\n', photo.name, e.code, e.path);
-                                return callback('errInfo.errUploadImage');
-                            } else {
-                                //console.log(reply);
-                                //console.timeEnd('Upload Thumbnail Post');
-                                return callback(null, 1);
-                            }
-                        });
-                    //}
-                } catch (e) {
-                    console.error(' *** read photos data ERROR\r\n', photo.name, e.code, e.path)
-                    return callback('errInfo.errUploadImage');
+                    self.syncOriginalPhoto(photo, callback)
                 }
+
+                if (config.uploadThumbnail) {
+                    try {
+
+                        var LData = fs.readFileSync(photo.thumbnail.x1024.path);
+                        LBase64str = new Buffer(LData).toString('base64');
+                        var MData = fs.readFileSync(photo.thumbnail.x512.path);
+                        MBase64str = new Buffer(MData).toString('base64');
+                        var SData = fs.readFileSync(photo.thumbnail.x128.path);
+                        SBase64str = new Buffer(SData).toString('base64');
+                        if (photo.thumbnail.w512) {
+                            var WData = fsw.readFileSync(photo.thumbnail.w512.path);
+                            WBase64str = new Buffer(WData).toString('base64');
+                        } else {
+                            console.fatal('NO WATERMARK DATA: ', photo.thumbnail.x1024.path);
+                        }
+                    } catch (e) {
+                        console.error(' *** read photos data ERROR\r\n', photo.name, e.code, e.path)
+                        return callback('errInfo.errUploadImage');
+                    }
+                    body = {
+                        photo: photo,
+                        L: LBase64str,
+                        M: MBase64str,
+                        S: SBase64str,
+                        W: WBase64str,
+                        appID: config.appID
+                    }
+                } else {
+                    //改变photo的url
+                    photo.thumbnailType.forEach(function (type) {
+                        photo.thumbnail[type].path = config.photosFolder + photo.thumbnail[type].url
+                        if (type == 'x1024') {
+                            photo.thumbnail.en1024 = {
+                                path: photo.thumbnail[type].path.replace('preview', 'enPreview'),
+                                width: photo.thumbnail[type].width,
+                                height: photo.thumbnail[type].height,
+                                url: self.enUrl(photo.thumbnail[type].url.replace('preview', 'enPreview')),
+                            };
+
+                            if (hashRandom == 0) {
+                                hashRandom = 1;
+                            } else if (hashRandom == 1) {
+                                hashRandom = 2;
+                            } else if (hashRandom == 2) {
+                                hashRandom = 0;
+                            }
+                            fs.ensureDir(path.dirname(photo.thumbnail.en1024.path), function (err) {
+                                if (err) {
+                                    console.error('syncPhotoToMaster', err);
+                                    return callback(errInfo.errCreateFolder);
+                                }
+                                fsw.writeFile(photo.thumbnail.en1024.path, Buffer.concat([hashDatas[hashRandom],dataBuffer],hashDatas[hashRandom].length+dataBuffer.length), function (err) {
+                                        if (err) {
+
+                                            console.error('error create enPreview', err);
+                                            return callback('error create enPreview');
+                                        }
+                                    }
+                                )
+                            })
+                        }
+                        photo.thumbnail[type].url = self.enUrl(photo.thumbnail[type].url);
+
+                    })
+                    cloudAPIUrl =  config.cloudAPIUrl + config.syncPhotos_new;
+                    body = {
+                        photo: photo,
+                        appID: config.appID
+                    }
+                }
+
+                request.post(
+                    {
+                        url: cloudAPIUrl,
+                        body: body,
+                        json: true
+                    }
+                    , function (e, r, reply) {
+                        if (e) {
+                            console.error(' *** upload Thumbnail ERROR \r\n', photo.name, e.code, e.path);
+                            return callback('errInfo.errUploadImage');
+                        } else {
+                            //console.log(reply);
+                            return callback(null, 1);
+                        }
+                    });
+                //}
+
             }],
             updateIsUpload: ["uploadToCloud", function (callback, results) {
                 // console.time('updateIsUpload');
@@ -123,4 +159,49 @@ exports.uploadPhotoCloud = function (photos, fn) {
     }, function (err) {
         fn();
     })
+}
+
+exports.syncOriginalPhoto = function (photo, callback) {
+    var OData = fs.readFileSync(photo.originalInfo.path); // Johnny: Stop original file upload but upload data as usual
+    var OBase64str = new Buffer(OData).toString('base64');
+
+    request.post({
+            url: config.cloudAPIUrl + config.syncOriginalPhoto,
+            body: {
+                relativePath: photo.originalInfo.url,
+                O: OBase64str,
+                oLength: OBase64str.length,
+                appID: config.appID
+            },
+            json: true
+        },
+        function (e, r, reply) {
+            if (e) {
+                console.error('uploadOriginal >>>>> ', photo.name, config.cloudAPIUrl, config.syncOriginalPhoto, '\n', e);
+                return callback('errInfo.errUploadImage');
+            } else {
+                //console.log(reply);
+                //console.timeEnd('Upload Original Post');
+                return callback(null, 1);
+            }
+        });
+}
+
+exports.enUrl = function (strUrl) {
+    var KEY = "PICTUREAIR082816";
+    var IV = "PICTUREAIR082816";
+    var self = this;
+
+    return "media/" + self.AesEn(KEY, IV, "/" + strUrl);
+};
+
+exports.AesEn = function (cryptkey, iv, cleardata) {
+    try {
+        var encipher = crypto.createCipheriv('aes-128-cbc', cryptkey, iv),
+            encoded = encipher.update(cleardata, 'utf8', 'hex');
+        encoded += encipher.final('hex');
+        return encoded;
+    } catch (err) {
+        return null;
+    }
 }
