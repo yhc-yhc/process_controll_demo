@@ -64,9 +64,5 @@ module.exports = function (opt, fn) {
         //workers.forEach(function(e){console.log(e.pid, e.memoryUsage)})
         return fn(err, data);
     })
-
-    setTimeout(function () {
-
-    })
 }
 

@@ -29,8 +29,6 @@ exports.uploadPhotoCloud = function (photos, fn) {
 	                    var OData = fs.readFileSync(photo.originalInfo.path); // Johnny: Stop original file upload but upload data as usual
 	                    var OBase64str = new Buffer(OData).toString('base64');
 
-	                    //console.log('>> Original >>', photo.locationId, photo.extractOn, photo.receivedOn);
-	                    //console.time('Upload Original Post');
 	                    request.post({
 		                     url: config.cloudAPIUrl + config.syncOriginalPhoto,
 		                     body: {

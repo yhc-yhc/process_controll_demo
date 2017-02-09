@@ -92,6 +92,7 @@ function doNext() {
 
         var delayLoop_ = null;
         createWorker == numPhotoPerUpload / numPohtoPerWorker ? delayLoop_ = delayLoop : delayLoop_ = delayLoop / 2;
+        console.log('delay loop:', delayLoop_, createWorker, numPhotoPerUpload/numPohtoPerWorker)
         setTimeout(function () {
             queryUpload(blanceWork)
         }, delayLoop_)
