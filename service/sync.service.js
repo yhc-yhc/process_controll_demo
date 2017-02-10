@@ -73,18 +73,41 @@ exports.uploadPhotoCloud = function (photos, fn) {
                         W: WBase64str,
                         appID: config.appID
                     }
+                    request.post(
+                        {
+                            url: cloudAPIUrl,
+                            body: body,
+                            json: true
+                        }
+                        , function (e, r, reply) {
+                            if (e) {
+                                console.error(' *** upload Thumbnail ERROR \r\n', photo.name, e.code, e.path);
+                                return callback('errInfo.errUploadImage');
+                            } else {
+                                //console.log(reply);
+                                return callback(null, 1);
+                            }
+                        });
                 } else {
                     //改变photo的url
                     photo.thumbnailType.forEach(function (type) {
-                        photo.thumbnail[type].path = config.photosFolder + photo.thumbnail[type].url
+                        if (type != 'x1024') {
+                            photo.thumbnail[type].path = config.photosFolder + photo.thumbnail[type].url;
+                            photo.thumbnail[type].url = self.enUrl(photo.thumbnail[type].url);
+                        }
+                    })
+                    photo.thumbnailType.forEach(function (type) {
                         if (type == 'x1024') {
+                            var dataBuffer = fs.readFileSync(photo.thumbnail.x1024.path);
+                            photo.thumbnail[type].path = config.photosFolder + photo.thumbnail[type].url
+
                             photo.thumbnail.en1024 = {
                                 path: photo.thumbnail[type].path.replace('preview', 'enPreview'),
                                 width: photo.thumbnail[type].width,
                                 height: photo.thumbnail[type].height,
                                 url: self.enUrl(photo.thumbnail[type].url.replace('preview', 'enPreview')),
                             };
-
+                            photo.thumbnail[type].url = self.enUrl(photo.thumbnail[type].url);
                             if (hashRandom == 0) {
                                 hashRandom = 1;
                             } else if (hashRandom == 1) {
@@ -94,46 +117,42 @@ exports.uploadPhotoCloud = function (photos, fn) {
                             }
                             fs.ensureDir(path.dirname(photo.thumbnail.en1024.path), function (err) {
                                 if (err) {
-                                    console.error('syncPhotoToMaster', err);
-                                    return callback(errInfo.errCreateFolder);
+                                    console.error('error create enPreview dir', err);
+                                    return callback('errInfo.errCreateFolder');
                                 }
-                                fsw.writeFile(photo.thumbnail.en1024.path, Buffer.concat([hashDatas[hashRandom],dataBuffer],hashDatas[hashRandom].length+dataBuffer.length), function (err) {
+                                fsw.writeFile(photo.thumbnail.en1024.path, Buffer.concat([hashDatas[hashRandom], dataBuffer], hashDatas[hashRandom].length + dataBuffer.length), function (err) {
                                         if (err) {
 
                                             console.error('error create enPreview', err);
                                             return callback('error create enPreview');
+                                        } else {
+                                            cloudAPIUrl = config.cloudAPIUrl + config.syncPhotos_new;
+                                            body = {
+                                                photo: photo,
+                                                appID: config.appID
+                                            }
+                                            request.post(
+                                                {
+                                                    url: cloudAPIUrl,
+                                                    body: body,
+                                                    json: true
+                                                }
+                                                , function (e, r, reply) {
+                                                    if (e) {
+                                                        console.error(' *** upload Thumbnail ERROR \r\n', photo.name, e.code, e.path);
+                                                        return callback('errInfo.errUploadImage');
+                                                    } else {
+                                                        //console.log(reply);
+                                                        return callback(null, 1);
+                                                    }
+                                                });
                                         }
                                     }
                                 )
                             })
                         }
-                        photo.thumbnail[type].url = self.enUrl(photo.thumbnail[type].url);
-
                     })
-                    cloudAPIUrl =  config.cloudAPIUrl + config.syncPhotos_new;
-                    body = {
-                        photo: photo,
-                        appID: config.appID
-                    }
                 }
-
-                request.post(
-                    {
-                        url: cloudAPIUrl,
-                        body: body,
-                        json: true
-                    }
-                    , function (e, r, reply) {
-                        if (e) {
-                            console.error(' *** upload Thumbnail ERROR \r\n', photo.name, e.code, e.path);
-                            return callback('errInfo.errUploadImage');
-                        } else {
-                            //console.log(reply);
-                            return callback(null, 1);
-                        }
-                    });
-                //}
-
             }],
             updateIsUpload: ["uploadToCloud", function (callback, results) {
                 // console.time('updateIsUpload');
@@ -161,6 +180,57 @@ exports.uploadPhotoCloud = function (photos, fn) {
     })
 }
 
+exports.syncToLine = function (photo, cb) {
+    var self = this;
+    self.addUpCount(photo, function (err) {
+        if (err) {
+            cb(err)
+        } else {
+            self.sendData(photo, function (err) {
+                if (err) {
+                    cb(err)
+                } else {
+                    self.changeUpFlag(photo, function (err) {
+                        if (err) {
+                            cb(err)
+                        } else {
+                            cb(null, photo)
+                        }
+                    })
+                }
+            })
+        }
+    })
+}
+
+exports.batchSyncToLine = function (photos, cb) {
+    var self = this, count = 0, errs = [], suceess = [];
+
+    if (photos.length == 0) {
+        cb(errs, suceess)
+    }
+    photos.forEach(function (photo) {
+        self.syncToLine(photo, function (err) {
+            if (err) {
+                next(err)
+            } else {
+                next(null, photo)
+            }
+        })
+    })
+    function next(err, photo) {
+        count++;
+        if (err) {
+            errs.push(photo)
+        } else {
+            suceess.push(photo)
+        }
+        if (count == photos.length) {
+            cb(errs, suceess)
+        }
+    }
+}
+
 exports.syncOriginalPhoto = function (photo, callback) {
     var OData = fs.readFileSync(photo.originalInfo.path); // Johnny: Stop original file upload but upload data as usual
     var OBase64str = new Buffer(OData).toString('base64');
@@ -185,6 +255,93 @@ exports.syncOriginalPhoto = function (photo, callback) {
                 return callback(null, 1);
             }
         });
+}
+
+exports.addUpCount = function (photo, next) {
+    photoModel.update({_id: photo._id}, {$inc: {uploadCount: 1}}, function (err) {
+        if (err) {
+            console.log('up upload count err')
+            next(err)
+        } else {
+            next(null)
+        }
+    })
+}
+
+exports.sendData = function (photo, next) {
+    photo.thumbnailType.forEach(function (type) {
+        if (type != 'x1024') {
+            photo.thumbnail[type].path = config.photosFolder + photo.thumbnail[type].url;
+            photo.thumbnail[type].url = self.enUrl(photo.thumbnail[type].url);
+        }
+    })
+    photo.thumbnailType.forEach(function (type) {
+        if (type == 'x1024') {
+            var dataBuffer = fs.readFileSync(photo.thumbnail.x1024.path);
+            photo.thumbnail[type].path = config.photosFolder + photo.thumbnail[type].url
+
+            photo.thumbnail.en1024 = {
+                path: photo.thumbnail[type].path.replace('preview', 'enPreview'),
+                width: photo.thumbnail[type].width,
+                height: photo.thumbnail[type].height,
+                url: self.enUrl(photo.thumbnail[type].url.replace('preview', 'enPreview')),
+            };
+            photo.thumbnail[type].url = self.enUrl(photo.thumbnail[type].url);
+            if (hashRandom == 0) {
+                hashRandom = 1;
+            } else if (hashRandom == 1) {
+                hashRandom = 2;
+            } else if (hashRandom == 2) {
+                hashRandom = 0;
+            }
+            fs.ensureDir(path.dirname(photo.thumbnail.en1024.path), function (err) {
+                if (err) {
+                    console.error('error create enPreview dir', err);
+                    next(err);
+                }
+                fsw.writeFile(photo.thumbnail.en1024.path, Buffer.concat([hashDatas[hashRandom], dataBuffer], hashDatas[hashRandom].length + dataBuffer.length), function (err) {
+                        if (err) {
+
+                            console.error('error create enPreview', err);
+                            next(err);
+                        } else {
+                            cloudAPIUrl = config.cloudAPIUrl + config.syncPhotos_new;
+                            body = {
+                                photo: photo,
+                                appID: config.appID
+                            }
+                            request.post(
+                                {
+                                    url: cloudAPIUrl,
+                                    body: body,
+                                    json: true
+                                }
+                                , function (e, r, reply) {
+                                    if (e) {
+                                        console.error(' *** upload Thumbnail ERROR \r\n', photo.name, e.code, e.path);
+                                        next(e);
+                                    } else {
+                                        //console.log(reply);
+                                        next(null);
+                                    }
+                                });
+                        }
+                    }
+                )
+            })
+        }
+    })
+}
+
+exports.changeUpFlag = function (photo, next) {
+    photoModel.update({_id: photo._id}, {$set: {isUpload: true}}, function (err, i) {
+        if (err) {
+            console.error(' *** change uppload flag err, DB.UPDATE', photo.name, '\n', err);
+            next(err);
+        } else {
+            next(null)
+        }
+    })
 }
 
 exports.enUrl = function (strUrl) {
